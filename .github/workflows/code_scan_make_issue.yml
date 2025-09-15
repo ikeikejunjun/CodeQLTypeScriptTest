@@ -35,62 +35,54 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
-      - name: Create Issues from CodeQL Alerts
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data: alerts } = await github.request(
-              "GET /repos/${{ github.repository }}/code-scanning/alerts",
-              { state: "open" }
-            );
-
-            for (const alert of alerts) {
-              const ruleId = alert.rule.id;
-              const file = alert.most_recent_instance?.location?.path || "unknown file";
-              const issueTitle = `CodeQL Alert: ${ruleId} in ${file}`;
-
-              // 既存のIssueを検索
-              const { data: issues } = await github.rest.issues.listForRepo({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                state: "open"
-              });
-
-              const exists = issues.some(issue => issue.title === issueTitle);
-              if (exists) continue;
-
-              // Issue本文を作成（Copilot向け指示を追加）
-              const body = "**Rule**: " + ruleId + "\n**Severity**: " + alert.rule.severity + "\n**File**: " + file + "\n**URL**: " + alert.html_url + "\n\n**Details:**\n" + alert.rule.description + "\n\n@github-copilot please suggest a fix\ncc @ikeikejunjun";
-
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: issueTitle,
-                body: body,
-                assignees: ["ikeikejunjun"]
-              });
-            }
-
-      - name: Assign Copilot via GraphQL
+      - name: Fetch code scanning alerts
+        id: fetch_alerts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ISSUE_ID=$(curl -s -H "Authorization: bearer ${{ secrets.GITHUB_TOKEN }}" \
+          curl -s -H "Authorization: bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?state=open&per_page=100" \
+            > alerts.json
+          
+          COUNT=$(jq 'length' alerts.json)
+          echo "Found $COUNT alerts"
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Process alerts and create issues
+        if: steps.fetch_alerts.outputs.count != '0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          REPO_ID=$(curl -s -H "Authorization: bearer $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"query":"query { repository(owner:\"YOUR_ORG\", name:\"YOUR_REPO\") { issue(number: ISSUE_NUMBER) { id }}}"}' \
-            https://api.github.com/graphql | jq -r '.data.repository.issue.id')
+            -d "{\"query\":\"query { repository(owner:\\\"$OWNER\\\", name:\\\"$REPO\\\") { id } }\"}" \
+            https://api.github.com/graphql | jq -r '.data.repository.id')
 
-          echo "Issue ID: $ISSUE_ID"
-
-          # Copilot の user ID を使う必要がある
-          COPILOT_ID=$(curl -s -H "Authorization: bearer ${{ secrets.GITHUB_TOKEN }}" \
+          BOT_ID=$(curl -s -H "Authorization: bearer $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"query":"query { user(login:\"copilot\") { id }}"}' \
-            https://api.github.com/graphql | jq -r '.data.user.id')
+            -d "{\"query\":\"query { repository(owner:\\\"$OWNER\\\", name:\\\"$REPO\\\") { suggestedActors(capabilities:[CAN_BE_ASSIGNED]) { nodes { login id } } } }\"}" \
+            https://api.github.com/graphql | jq -r '.data.repository.suggestedActors.nodes[] | select(.login==\"copilot-swe-agent\") | .id')
 
-          echo "Copilot ID: $COPILOT_ID"
+          echo "Repository ID: $REPO_ID"
+          echo "Copilot BOT_ID: $BOT_ID"
 
-          # issue に Copilot をアサイン
-          curl -s -X POST \
-            -H "Authorization: bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { updateIssue(input: {issueId: \\\"$ISSUE_ID\\\", assigneeIds: [\\\"$COPILOT_ID\\\"]}) { issue { number assignees(first:5) { nodes { login } } } }}\"}" \
-            https://api.github.com/graphql
+          jq -c '.[]' alerts.json | while read alert; do
+            TITLE=$(echo "$alert" | jq -r '.rule.id + ": " + .rule.description')
+            BODY=$(echo "$alert" | jq -r '.most_recent_instance.message.text')
+
+            echo "Creating issue: $TITLE"
+
+            ISSUE_ID=$(curl -s -H "Authorization: bearer $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"mutation { createIssue(input:{repositoryId:\\\"$REPO_ID\\\", title:\\\"$TITLE\\\", body:\\\"$BODY\\\"}) { issue { id number } } }\"}" \
+              https://api.github.com/graphql | jq -r '.data.createIssue.issue.id')
+
+            echo "Assigning Copilot to issue $ISSUE_ID"
+
+            curl -s -H "Authorization: bearer $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"mutation { replaceActorsForAssignable(input: {assignableId: \\\"$ISSUE_ID\\\", actorIds: [\\\"$BOT_ID\\\"]}) { assignable { ... on Issue { number assignees(first:5) { nodes { login } } } } } }\"}" \
+              https://api.github.com/graphql
+          done
