@@ -1,0 +1,72 @@
+name: CodeQL Scan and Create Issues
+
+on:
+  schedule:
+    - cron: "0 3 1 * *" # 毎月1日の午前3時に実行
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+      issues: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'typescript' ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Create Issues from CodeQL Alerts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: alerts } = await github.request(
+              "GET /repos/${{ github.repository }}/code-scanning/alerts",
+              { state: "open" }
+            );
+
+            for (const alert of alerts) {
+              const ruleId = alert.rule.id;
+              const file = alert.most_recent_instance?.location?.path || "unknown file";
+              const issueTitle = `CodeQL Alert: ${ruleId} in ${file}`;
+
+              // 既存のIssueを検索
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: "open"
+              });
+
+              const exists = issues.some(issue => issue.title === issueTitle);
+              if (exists) continue;
+
+              // Issue本文を作成（Copilot向け指示を追加）
+              const body = "**Rule**: " + ruleId + "\n**Severity**: " + alert.rule.severity + "\n**File**: " + file + "\n**URL**: " + alert.html_url + "\n\n**Details:**\n" + alert.rule.description + "\n\n@github-copilot please suggest a fix\ncc @ikeikejunjun";
+
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: body,
+                assignees: ["github-copilot", "ikeikejunjun"]
+              });
+            }
