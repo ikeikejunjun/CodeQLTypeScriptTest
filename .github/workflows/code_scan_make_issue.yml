@@ -42,9 +42,9 @@ jobs:
         # NOTE: この step は GraphQL を使うため、GH CLI が使用するトークンをここで指定します。
         # 必ずリポジトリの Secrets に COPILOT_TOKEN を登録してください（user token / PAT）。
         env:
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-          REPO_FULL: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          FULL: ${{ github.repository }}
           # このトークン should be a user token (PAT) with repo access — see docs.
           # https://docs.github.com/ja/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-token-%E3%81%AE%E4%BD%9C%E6%88%90
           TOKEN: ${{ secrets.COPILOT_TOKEN }}
