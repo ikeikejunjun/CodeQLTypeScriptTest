@@ -71,8 +71,26 @@ jobs:
               });
             }
 
-      - name: Assign Copilot via CLI
+      - name: Assign Copilot via GraphQL
         run: |
-          gh issue edit ${{ steps.create_issue.outputs.issue_number }} --add-assignee "@copilot"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_ID=$(curl -s -H "Authorization: bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"query { repository(owner:\"YOUR_ORG\", name:\"YOUR_REPO\") { issue(number: ISSUE_NUMBER) { id }}}"}' \
+            https://api.github.com/graphql | jq -r '.data.repository.issue.id')
+
+          echo "Issue ID: $ISSUE_ID"
+
+          # Copilot の user ID を使う必要がある
+          COPILOT_ID=$(curl -s -H "Authorization: bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"query { user(login:\"copilot\") { id }}"}' \
+            https://api.github.com/graphql | jq -r '.data.user.id')
+
+          echo "Copilot ID: $COPILOT_ID"
+
+          # issue に Copilot をアサイン
+          curl -s -X POST \
+            -H "Authorization: bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { updateIssue(input: {issueId: \\\"$ISSUE_ID\\\", assigneeIds: [\\\"$COPILOT_ID\\\"]}) { issue { number assignees(first:5) { nodes { login } } } }}\"}" \
+            https://api.github.com/graphql
