@@ -89,11 +89,15 @@ jobs:
             title="CodeQL Alert: ${rule_id:-unknown}"
             body="CodeQL Alert detected\n\n**Rule:** $rule_id\n\n**Message:** $msg\n\n[View Alert]($url)"
 
-            # 既存 Issue に同じ URL が含まれているかチェック
-            existing=$(echo "$issues" | jq -r --arg u "$url" '.[] | select(.body!=null and (.body|contains($u))) | .number' | head -n1)
-            if [ -n "$existing" ]; then
-              echo "Alert already tracked in Issue #$existing"
-              continue
+            if  [ "$(echo "$issues" | jq 'length')" -eq 0 ]; then
+              echo "issue is not exist now"
+            else
+              # 既存 Issue に同じ URL が含まれているかチェック
+              existing=$(echo "$issues" | jq -r --arg u "$url" '.[] | select(.body!=null and (.body|contains($u))) | .number' | head -n1)
+              if [ -n "$existing" ]; then
+                echo "Alert already tracked in Issue #$existing"
+                continue
+              fi
             fi
 
             # 5) 新しい Issue を作成
