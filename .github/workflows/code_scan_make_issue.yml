@@ -70,6 +70,10 @@ jobs:
           alerts=$(curl -s -H "Authorization: token $TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "$api/repos/$FULL/code-scanning/alerts?state=open&per_page=100")
+          # nullの場合は空配列に
+          if [ "$alerts" = "null" ] || [ -z "$alerts" ]; then
+            alerts="[]"
+          fi
 
           count=$(echo "$alerts" | jq 'length')
           echo "Found $count alerts"
@@ -79,6 +83,10 @@ jobs:
           issues=$(curl -s -H "Authorization: token $TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "$api/repos/$FULL/issues?state=open&per_page=100")
+          # nullの場合は空配列に
+          if [ "$issues" = "null" ] || [ -z "$issues" ]; then
+            issues="[]"
+          fi
 
           # 4) 各アラートを処理
           echo "$alerts" | jq -c '.[]' | while read -r alert; do
