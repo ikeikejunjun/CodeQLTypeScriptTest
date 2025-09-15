@@ -32,69 +32,121 @@ jobs:
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+      # スキャンの実行時間が長いので、スキャンしない（本番ではスキャンするようにコメントアウトをはずす！）
+      #- name: Perform CodeQL Analysis
+      #  uses: github/codeql-action/analyze@v3
 
-      - name: Create Issues for CodeQL Alerts
-        id: create_issues
+
+      # --- Alerts を取得して Issue 作成 + Copilot 割当 ---
+      - name: Create issues from CodeQL alerts and assign Copilot
+        # NOTE: この step は GraphQL を使うため、GH CLI が使用するトークンをここで指定します。
+        # 必ずリポジトリの Secrets に COPILOT_TOKEN を登録してください（user token / PAT）。
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          REPO_FULL: ${{ github.repository }}
+          # このトークン should be a user token (PAT) with repo access — see docs.
+          # https://docs.github.com/ja/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-token-%E3%81%AE%E4%BD%9C%E6%88%90
+          GH_TOKEN: ${{ secrets.COPILOT_TOKEN }}
         run: |
-          # Copilot AgentのIDをGraphQLで取得
-          copilot_id=$(gh api graphql -f query='
-            query {
-              repository(owner: "${{ github.repository_owner }}", name: "${{ github.event.repository.name }}") {
-                assignableUsers(query: "copilot") {
+          set -eu
+
+          owner="$REPO_OWNER"
+          repo="$REPO_NAME"
+          full="$REPO_FULL"
+
+          echo "Repository: $full"
+          echo "Checking for CodeQL alerts..."
+
+          # 1) Copilot Bot ID を GraphQL で取得（suggestedActors を使う — 公式手順に準拠）
+          echo "Querying suggestedActors for Copilot..."
+          copilot_bot_id=$(gh api graphql -f query='
+            query($owner:String!, $name:String!) {
+              repository(owner: $owner, name: $name) {
+                suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
                   nodes {
-                    id
                     login
+                    __typename
+                    ... on Bot { id }
+                    ... on User { id }
                   }
                 }
               }
-            }' --jq '.data.repository.assignableUsers.nodes[0].id')
+            }' -f owner="$owner" -f name="$repo" --jq '.data.repository.suggestedActors.nodes[] | select(.login == "copilot-swe-agent") | .id' || true)
 
-          echo "Copilot Agent ID: $copilot_id"
+          if [ -z "$copilot_bot_id" ]; then
+            echo "Copilot Bot ID not found in suggestedActors — Copilot may not be enabled in this repo. Will still create issues but skip assignment."
+          else
+            echo "Found Copilot Bot ID: $copilot_bot_id"
+          fi
 
-          # CodeQLのアラート一覧を取得
-          alerts=$(gh api -H "Accept: application/vnd.github+json" \
-            /repos/${{ github.repository }}/code-scanning/alerts \
-            --jq '.[] | select(.state=="open") | {rule: .rule.id, message: .most_recent_instance.message.text, url: .html_url}')
+          # 2) Code Scanning Alerts を REST で取得（open のもの）
+          alerts_json=$(gh api -H "Accept: application/vnd.github+json" "/repos/$full/code-scanning/alerts?state=open&per_page=100")
+          alerts_count=$(echo "$alerts_json" | jq 'length')
+          echo "Found $alerts_count open alert(s)."
 
-          if [ -z "$alerts" ]; then
-            echo "No open alerts found."
+          if [ "$alerts_count" -eq 0 ]; then
+            echo "No open alerts. Exiting."
             exit 0
           fi
 
-          echo "$alerts" | jq -c '.' | while read -r alert; do
-            title=$(echo "$alert" | jq -r '.rule')
-            body=$(echo "$alert" | jq -r '.message')
-            url=$(echo "$alert" | jq -r '.url')
+          # 3) 既存の open issues をあらかじめ取得（本文に alert URL が含まれていれば既登録と判定）
+          echo "Fetching open issues to check for duplicates..."
+          issues_json=$(gh api repos/"$full"/issues?state=open&per_page=100)
 
-            issue_body="CodeQL Alert detected:\n\n**Rule:** $title\n\n**Message:** $body\n\n[View Alert]($url)"
+          # 4) 各アラートを処理
+          echo "$alerts_json" | jq -c '.[]' | while read -r alert; do
+            rule_id=$(echo "$alert" | jq -r '.rule.id // empty')
+            msg=$(echo "$alert" | jq -r '.most_recent_instance.message.text // empty')
+            alert_url=$(echo "$alert" | jq -r '.html_url // empty')
 
-            # 既存Issueに同じURLが含まれていないか確認
-            existing=$(gh issue list --state open --search "$url" --json number --jq '.[0].number')
+            # 作成する Issue タイトル / 本文
+            issue_title="CodeQL Alert: ${rule_id:-(no-rule-id)}"
+            issue_body="CodeQL Alert detected\n\n**Rule:** ${rule_id}\n\n**Message:**\n${msg}\n\n[View Alert](${alert_url})"
 
-            if [ -n "$existing" ] && [ "$existing" != "null" ]; then
-              echo "Alert already tracked in Issue #$existing. Skipping."
+            # 既存 Issue に同じ alert_url が含まれていないか確認
+            existing_num=$(echo "$issues_json" | jq -r --arg url "$alert_url" '.[] | select(.body != null and (.body | contains($url))) | .number' | head -n1 || true)
+
+            if [ -n "$existing_num" ]; then
+              echo "Alert already tracked in Issue #${existing_num} — skipping creation."
               continue
             fi
 
-            # Issueを作成
-            issue=$(gh api -X POST repos/${{ github.repository }}/issues \
-              -f title="CodeQL Alert: $title" \
-              -f body="$issue_body")
-
-            issue_number=$(echo "$issue" | jq -r '.number')
-            issue_id=$(echo "$issue" | jq -r '.node_id')
-
+            # Issue 作成（REST）
+            echo "Creating new issue for alert (rule=${rule_id})..."
+            created_issue=$(gh api -X POST repos/"$full"/issues -f title="$issue_title" -f body="$issue_body")
+            issue_number=$(echo "$created_issue" | jq -r '.number')
             echo "Created issue #$issue_number"
 
-            # Copilot Agentを割り当て
-            gh api graphql -f query='
-              mutation($issueId:ID!, $assigneeIds:[ID!]!) {
-                addAssigneesToAssignable(input: { assignableId: $issueId, assigneeIds: $assigneeIds }) {
-                  assignable { ... on Issue { number assignees(first:10) { nodes { login } } } }
+            # Issue の GraphQL global ID を取得（公式では GraphQL の issue.id を取得して mutate する手順を推奨）
+            issue_id=$(gh api graphql -f query='
+              query($owner:String!, $name:String!, $number:Int!) {
+                repository(owner:$owner, name:$name) {
+                  issue(number:$number) { id title }
                 }
-              }' -f issueId="$issue_id" -f assigneeIds="[$copilot_id]"
+              }' -f owner="$owner" -f name="$repo" -f number="$issue_number" --jq '.data.repository.issue.id' || true)
+
+            if [ -z "$issue_id" ]; then
+              echo "Could not retrieve GraphQL issue ID for #$issue_number — skipping Copilot assignment."
+              continue
+            fi
+
+            # Copilot Bot ID が取得できていれば、replaceActorsForAssignable で既存 Issue を Copilot に割り当てる
+            if [ -n "$copilot_bot_id" ]; then
+              echo "Assigning Copilot to issue #$issue_number via GraphQL replaceActorsForAssignable..."
+              gh api graphql -f query='
+                mutation($assignableId: ID!, $actorIds: [ID!]!) {
+                  replaceActorsForAssignable(input: { assignableId: $assignableId, actorIds: $actorIds }) {
+                    assignable { ... on Issue { id title assignees(first:10) { nodes { login } } } }
+                  }
+                }' -f assignableId="$issue_id" -f actorIds="[$copilot_bot_id]" --jq '.data.replaceActorsForAssignable.assignable.assignees.nodes[].login' || {
+                  echo "Warning: GraphQL mutation to assign Copilot failed for issue #$issue_number"
+                }
+
+              echo "Assigned Copilot (if API call succeeded)."
+            else
+              echo "Copilot bot ID not available — skipping assignment for issue #$issue_number."
+            fi
           done
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          echo "Done."
