@@ -67,6 +67,12 @@ jobs:
                 repo: context.repo.repo,
                 title: issueTitle,
                 body: body,
-                assignees: ["github-copilot", "ikeikejunjun"]
+                assignees: ["ikeikejunjun"]
               });
             }
+
+      - name: Assign Copilot via CLI
+        run: |
+          gh issue edit ${{ steps.create_issue.outputs.issue_number }} --add-assignee "@copilot"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
