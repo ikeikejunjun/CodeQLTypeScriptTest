@@ -63,7 +63,7 @@ jobs:
           BOT_ID=$(curl -s -H "Authorization: bearer $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"query\":\"query { repository(owner:\\\"$OWNER\\\", name:\\\"$REPO\\\") { suggestedActors(capabilities:[CAN_BE_ASSIGNED]) { nodes { login id } } } }\"}" \
-            https://api.github.com/graphql | jq -r '.data.repository.suggestedActors.nodes[] | select(.login==\"copilot-swe-agent\") | .id')
+            https://api.github.com/graphql | jq -r '.data.repository.suggestedActors.nodes[] | select(.login=="copilot-swe-agent") | .id')
 
           echo "Repository ID: $REPO_ID"
           echo "Copilot BOT_ID: $BOT_ID"
