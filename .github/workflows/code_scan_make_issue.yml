@@ -68,7 +68,7 @@ jobs:
                 repo: context.repo.repo,
                 title: issueTitle,
                 body: body,
-                assignees: ["ikeikejunjun"]
+                assignees: ["ikeikejunjun", "copilot-swe-agent"]
               });
             }
 
