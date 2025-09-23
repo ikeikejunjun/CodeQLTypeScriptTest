@@ -6,6 +6,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const app = (0, express_1.default)();
 const port = 3000;
+// HTML escaping function to prevent XSS attacks
+function escapeHtml(unsafe) {
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
 app.use(express_1.default.urlencoded({ extended: true }));
 app.get("/", (req, res) => {
     res.send(`
@@ -22,11 +31,12 @@ app.get("/", (req, res) => {
 });
 app.post("/", (req, res) => {
     const msg = req.body.msg || "";
-    // XSS脆弱性: ユーザー入力をエスケープせずにHTMLへ埋め込む
+    // XSS脆弱性を修正: ユーザー入力をエスケープしてからHTMLへ埋め込む
+    const escapedMsg = escapeHtml(msg);
     res.send(`
     <html>
       <body>
-        <h1>あなたの入力: ${msg}</h1>
+        <h1>あなたの入力: ${escapedMsg}</h1>
         <a href="/">戻る</a>
       </body>
     </html>
