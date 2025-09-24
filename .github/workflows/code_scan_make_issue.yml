@@ -49,6 +49,8 @@ jobs:
             console.log(`[CodeQL] アラート件数: ${alerts.length}`);
 
             // CopilotユーザーIDをGraphQLで取得
+            const copilotId = "BOT_kgDOC9w8XQ";
+            /* うまくいかないので一旦固定IDで対応
             const copilotUserQuery = `
               query { 
                 repository(owner: \"ikeikejunjun\", name: \"CodeQLTypeScriptTest\") {
@@ -77,6 +79,7 @@ jobs:
               core.setFailed("Copilot user ID not found.");
               return;
             }
+            */
 
             // 既存Issue一覧を取得
 
