@@ -51,7 +51,7 @@ jobs:
             // CopilotユーザーIDをGraphQLで取得
             const copilotUserQuery = `
               query { 
-                repository(owner: "ikeikejunjun", name: "CodeQLTypeScriptTest") {
+                repository(owner: \"ikeikejunjun\", name: \"CodeQLTypeScriptTest\") {
                   suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) { 
                     nodes { 
                       login __typename ... on Bot {
@@ -115,7 +115,7 @@ jobs:
               // Copilotをアサイン（GraphQLでassigneeIdsに追加）
               const assignMutation = `
                 mutation {
-                  replaceActorsForAssignable(input: {assignableId: "${newIssue.node_id}", actorIds: ["${copilotId}"]}) {
+                  replaceActorsForAssignable(input: {assignableId: \"${newIssue.node_id}\", actorIds: [\"${copilotId}\"]}) {
                     assignable {
                       ... on Issue {
                         id
