@@ -67,7 +67,7 @@ jobs:
 
             console.log("[Copilot] ユーザーIDをGraphQLで取得中...");
             const copilotResult = await github.graphql(copilotUserQuery);
-            const nodes = copilotResult.data.repository.suggestedActors.nodes;
+            const nodes = copilotResult.repository.suggestedActors.nodes;
             console.log(`[Copilot] suggestedActors: ${JSON.stringify(nodes, null, 2)}`);
             // loginがcopilot-swe-agentのidを取得
             const copilotNode = nodes.find(n => n.login === "copilot-swe-agent");
