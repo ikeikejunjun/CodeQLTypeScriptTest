@@ -39,6 +39,7 @@ jobs:
       - name: Create Issues from CodeQL Alerts and Assign Copilot
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.COPILOT_TOKEN }}
           script: |
 
             console.log("[CodeQL] アラート情報を取得中...");
