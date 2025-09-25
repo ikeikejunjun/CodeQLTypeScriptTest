@@ -2,6 +2,16 @@ import express from "express";
 const app = express();
 const port = 3000;
 
+// HTML escaping function to prevent XSS attacks
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res) => {
@@ -20,11 +30,12 @@ app.get("/", (req, res) => {
 
 app.post("/", (req, res) => {
   const msg = req.body.msg || "";
-  // XSS脆弱性: ユーザー入力をエスケープせずにHTMLへ埋め込む
+  // XSS脆弱性を修正: ユーザー入力をエスケープしてからHTMLへ埋め込む
+  const escapedMsg = escapeHtml(msg);
   res.send(`
     <html>
       <body>
-        <h1>あなたの入力: ${msg}</h1>
+        <h1>あなたの入力: ${escapedMsg}</h1>
         <a href="/">戻る</a>
       </body>
     </html>
